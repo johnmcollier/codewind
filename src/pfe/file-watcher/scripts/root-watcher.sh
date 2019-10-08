@@ -115,4 +115,9 @@ if [ "$IN_K8" == "true" ]; then
 		cp /file-watcher/scripts/wrappers/kubectl_wrapper.sh /usr/local/bin/kubectl
 		chmod +x /usr/local/bin/kubectl
 	fi
+
+	# Get the PFE deployment name and uid and add them to the bash profile
+	PFE_NAME=$( kubectl get po --selector=app=codewind-pfe,codewindWorkspace=$CHE_WORKSPACE_ID -o jsonpath='{.items[0].metadata.name}' )
+	PFE_UID=$( kubectl get po --selector=app=codewind-pfe,codewindWorkspace=$CHE_WORKSPACE_ID -o jsonpath='{.items[0].metadata.uid}' )
+	echo -e "\nexport PFE_NAME=$PFE_NAME\nexport PFE_UID=$PFE_UID" >> ~/.profile
 fi
