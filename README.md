@@ -4,7 +4,7 @@
 [![Build Status](https://ci.eclipse.org/codewind/buildStatus/icon?job=Codewind%2Fcodewind%2Fmaster)](https://ci.eclipse.org/codewind/job/Codewind/job/codewind/job/master/)
 [![Chat](https://img.shields.io/static/v1.svg?label=chat&message=mattermost&color=145dbf)](https://mattermost.eclipse.org/eclipse/channels/eclipse-codewind)
 
-Build high-quality cloud-native applications for Kubernetes, regardless of your IDE or language.
+Test Build high-quality cloud-native applications for Kubernetes, regardless of your IDE or language.
 
 Codewind enables you to create applications from a template or sample and includes support for launching, updating, testing, and debugging in  Docker containers on the desktop. Codewind also supports these features on Kubernetes. You can use Codewind to move existing applications to Docker and Kuberenetes. Codewind provides validation to ensure that applications follow best practices.
 
