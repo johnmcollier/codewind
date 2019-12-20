@@ -15,6 +15,8 @@ const ProjectListError = require('../../modules/utils/errors/ProjectListError');
 const ProjectError = require('../../modules/utils/errors/ProjectError');
 const ProjectMetricsError = require('../../modules/utils/errors/ProjectMetricsError');
 const Project = require('../../modules/Project');
+const { validateReq } = require('../../middleware/reqValidator');
+const metricsController = require('../../controllers/metrics.controller');
 
 const router = express.Router();
 const log = new Logger(__filename);
@@ -161,6 +163,8 @@ router.get('/api/v1/projects/:id/metrics/:type', async function (req, res) {
     }
   }
 });
+
+router.post('/api/v1/projects/:id/metrics/inject', validateReq, metricsController.inject);
 
 /**
 * Updates the description of a specific load-test run on a specified project

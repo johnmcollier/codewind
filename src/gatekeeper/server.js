@@ -1,6 +1,7 @@
 const express = require('express')
 const Keycloak = require('keycloak-connect');
 const session = require('express-session');
+const httpProxy = require('http-proxy');
 const request = require('request')
 const { promisify } = require('util');
 const https = require('https');
@@ -16,6 +17,9 @@ let pfe_protocol = "http"
 
 main().catch(err => console.dir(err));
 async function main() {
+
+    // dotenv reads .env and adds it to the process.env object
+    require('dotenv').config()
     const app = express()
     const port = 9096
 
@@ -28,12 +32,13 @@ async function main() {
     let client_id = process.env.CLIENT_ID
     let auth_url = process.env.AUTH_URL
     let client_secret = process.env.CLIENT_SECRET
-    let enable_auth = process.env.ENABLE_AUTH
     let gatekeeper_host = process.env.GATEKEEPER_HOST
     let workspace_service = process.env.WORKSPACE_SERVICE
     let portal_secure = process.env.PORTAL_HTTPS
     let workspaceID = process.env.WORKSPACE_ID
     let required_accessRole = process.env.ACCESS_ROLE
+    const codewindVersion = process.env.CODEWIND_VERSION
+    const imageBuildTime = process.env.IMAGE_BUILD_TIME
 
     if (workspace_service != "") {
         pfe_host = process.env[(workspace_service + "_SERVICE_HOST").toUpperCase()]
@@ -43,7 +48,6 @@ async function main() {
             pfe_protocol = "https"
         }
     }
-
     console.log(`Gatekeeper ${workspaceID} with route authentication and UI Socket pass-through`)
 
     console.log("Gatekeeper configuration:")
@@ -98,7 +102,7 @@ async function main() {
     } else {
         console.log(`** Access role : ${required_accessRole}`)
     }
- 
+
     // Create a session-store for the express-session and keycloak middleware.
     let memoryStore = new session.MemoryStore();
     app.use(session({ secret: sessionSecret, resave: false, saveUninitialized: true, store: memoryStore }));
@@ -118,16 +122,8 @@ async function main() {
     const keyCloak = new Keycloak({ store: memoryStore }, kcConfig);
 
     // Slot-in authentication middleware
-    let authMiddleware = function (req, res, next) { next() }
-
-    // Activate / Disable authenticated routes features
-    if (enable_auth == "1") {
-        console.log(`** Gatekeeper: Authentication is enabled - ENABLE_AUTH=${enable_auth}`);
-        authMiddleware = keyCloak.protect("realm:"+required_accessRole);
-        app.use(keyCloak.middleware({ logout: '/logout', admin: '/' }));
-    } else {
-        console.log(`** Gatekeeper: Authentication is disabled - ENABLE_AUTH=${enable_auth}`);
-    }
+    const authMiddleware = keyCloak.protect("realm:"+required_accessRole);
+    app.use(keyCloak.middleware({ logout: '/logout', admin: '/' }));
 
     console.log("Added environment route to : /api/v1/gatekeeper/environment")
     // environment route
@@ -136,7 +132,10 @@ async function main() {
         const environment = {
             auth_url: auth_url,
             client_id: client_id,
-            realm: realm
+            workspace_id: workspaceID,
+            realm: realm,
+            codewind_version: codewindVersion,
+            image_build_time: imageBuildTime,
         }
         res.end(JSON.stringify(environment, null, 2));
     })
@@ -211,7 +210,15 @@ async function main() {
     const pem = require('pem');
     const createCertificateAsync = promisify(pem.createCertificate);
     let keys = await createCertificateAsync({ selfSigned: true });
-    server = https.createServer({ key: keys.serviceKey, cert: keys.certificate }, app).listen(port);
+    server = https.createServer({ key: keys.serviceKey, cert: keys.certificate }, app)
+
+    var proxy = new httpProxy.createProxyServer({secure: false, target: `wss://${pfe_host}:${pfe_port}`, ws:true});
+    server.on('upgrade', function (req, socket, head) {
+        console.log("Proxy: websocket connect 'upgrade'")
+        proxy.ws(req, socket, head);
+    });
+
+    server.listen(port, () => console.log(`Gatekeeper listening on port ${port}!`))
 
 }
 

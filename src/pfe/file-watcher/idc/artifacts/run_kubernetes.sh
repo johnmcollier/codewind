@@ -24,9 +24,9 @@ export PROJECT_ID=$5
 
 export LOGFOLDER=$6
 
-DEPLOYMENT_REGISTRY=$7
+IMAGE_PUSH_REGISTRY=$7
 
-echo "run_kubernetes.sh DEPLOYMENT_REGISTRY: $DEPLOYMENT_REGISTRY"
+echo "run_kubernetes.sh IMAGE_PUSH_REGISTRY: $IMAGE_PUSH_REGISTRY"
 
 # The directory that contains this shell script (which is also the installation artifact/ dir)
 export ARTIFACTS="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -68,9 +68,9 @@ fi
 mkdir -p $LOGSDIR
 
 # If there's a failed Helm release already, delete it. See https://github.com/helm/helm/issues/3353
-if [[ "$( helm list $RELEASE_NAME --failed )" ]]; then
+if [[ "$( helm list --failed -q | grep $RELEASE_NAME )" ]]; then
 	echo "Deleting old failed helm release $RELEASE_NAME"
-	helm delete $RELEASE_NAME --purge
+	helm delete $RELEASE_NAME
 fi
 
 # Find the Helm chart folder, error out if it can't be found
@@ -97,10 +97,9 @@ cp -fR $chartDir/* $tmpChart
 parentDir=$( dirname $tmpChart )
 
 # Render the template yamls for the chart
-helm template $tmpChart \
-	--name $RELEASE_NAME \
+helm template $RELEASE_NAME $tmpChart \
 	--values=/file-watcher/scripts/override-values.yaml \
-	--set image.repository=$DEPLOYMENT_REGISTRY/$CONTAINER_NAME \
+	--set image.repository=$IMAGE_PUSH_REGISTRY/$CONTAINER_NAME \
 	--output-dir=$parentDir
 
 deploymentFile=$( /file-watcher/scripts/kubeScripts/find-kube-resource.sh $tmpChart Deployment )
@@ -123,28 +122,26 @@ fi
 /file-watcher/scripts/kubeScripts/add-iterdev-to-chart.sh $deploymentFile $PROJNAME "/home/default/artifacts/new_entrypoint.sh" $LOGFOLDER
 
 # Tag and push the image to the registry
-if [[ ! -z $DEPLOYMENT_REGISTRY ]]; then	
+if [[ ! -z $IMAGE_PUSH_REGISTRY ]]; then	
 	# Tag and push the image
-	buildah push --tls-verify=false $CONTAINER_NAME $DEPLOYMENT_REGISTRY/$CONTAINER_NAME
+	buildah push --tls-verify=false $CONTAINER_NAME $IMAGE_PUSH_REGISTRY/$CONTAINER_NAME
 	if [ $? -eq 0 ]; then
-		echo "Successfully tagged and pushed the application image $DEPLOYMENT_REGISTRY/$CONTAINER_NAME"
+		echo "Successfully tagged and pushed the application image $IMAGE_PUSH_REGISTRY/$CONTAINER_NAME"
 	else
-		echo "Error: $?, could not push application image $DEPLOYMENT_REGISTRY/$CONTAINER_NAME" >&2
-		$util deploymentRegistryStatus $PROJECT_ID "buildscripts.invalidDeploymentRegistry"
+		echo "Error: $?, could not push application image $IMAGE_PUSH_REGISTRY/$CONTAINER_NAME" >&2
+		$util imagePushRegistryStatus $PROJECT_ID "buildscripts.invalidImagePushRegistry"
 		exit 7;
 	fi
 	
 	echo "Running install command: helm upgrade --install $RELEASE_NAME --recreate-pods $tmpChart"
-	helm upgrade \
-		--install $RELEASE_NAME \
-		--recreate-pods \
-		$tmpChart
+	helm upgrade $RELEASE_NAME $tmpChart \
+		--install  \
+		--recreate-pods
 else
 	echo "Running install command: helm upgrade --install $RELEASE_NAME --recreate-pods $tmpChart"
-	helm upgrade \
-		--install $RELEASE_NAME \
-		--recreate-pods \
-		$tmpChart
+	helm upgrade $RELEASE_NAME $tmpChart \
+		--install  \
+		--recreate-pods
 fi
 
 # Don't proceed if the helm install failed
@@ -165,7 +162,7 @@ while [ $POD_RUNNING -eq 0 ]; do
 		# Print the Helm status before deleting the release
 		helm status $RELEASE_NAME
 
-		helm delete $RELEASE_NAME --purge
+		helm delete $RELEASE_NAME
 		exit 1;
 	fi
 	sleep 1;

@@ -46,9 +46,9 @@ describe("PFE - functional test", () => {
   });
 
   if (process.env.IN_K8) {
-    before("set deployment registry", function (done: any): void {
+    before("set image push registry", function (done: any): void {
       this.timeout(timoutConfigs.defaultTimeout);
-      const workspace_settings_file_content = { deploymentRegistry: pfe_configs.deploymentRegistry };
+      const workspace_settings_file_content = { registryAddress: pfe_configs.imagePushRegistryAddress, registryNamespace: pfe_configs.imagePushRegistryNamespace };
       const workspace_settings_file_content_json = JSON.stringify(workspace_settings_file_content);
       const workspace_settings_file = path.join(app_configs.codewindWorkspaceDir, ".config", "settings.json");
 
@@ -61,8 +61,9 @@ describe("PFE - functional test", () => {
             expect(res);
             expect(body);
             body = JSON.parse(body);
-            expect(body.statusCode).to.equal(200);
-            expect(body.deploymentRegistry).to.equal(true);
+            expect(body.imagePushRegistry).to.equal(true);
+            expect(body.address).to.equal(pfe_configs.imagePushRegistryAddress);
+            expect(body.namespace).to.equal(pfe_configs.imagePushRegistryNamespace);
             done();
           });
         });
@@ -76,6 +77,9 @@ function runAllTests(): void {
   genericSuite.runTest();
   for (const chosenTemplate of Object.keys(projectTypes)) {
     for (const chosenProject of projectTypes[chosenTemplate]) {
+      if (process.env.TURBINE_PERFORMANCE_TEST) {
+        createDataFile(chosenTemplate, chosenProject);
+      }
       runProjectSpecificTest(chosenTemplate, chosenProject);
     }
   }
@@ -93,4 +97,17 @@ function runProjectSpecificTest(chosenTemplate: string, chosenProject: string): 
     language: chosenProject
   };
   projectSuite.runTest(projData, chosenTemplate, chosenProject);
+}
+
+function createDataFile(projectTemplate: string, projectLang: string): void {
+  const dataJson = path.resolve(__dirname, "..", "performance-test", "data", process.env.TEST_TYPE, process.env.TURBINE_PERFORMANCE_TEST, "performance-data.json");
+  if (! fs.existsSync(dataJson)) {
+    fs.writeFileSync(dataJson, "{}", "utf-8");
+  }
+  const fileContent = JSON.parse(fs.readFileSync(dataJson, "utf-8"));
+  fileContent[projectTemplate] = fileContent[projectTemplate] || {};
+  fileContent[projectTemplate][projectLang] = fileContent[projectTemplate][projectLang] || {};
+  const timestamp = Date.now();
+  fileContent[projectTemplate][projectLang][timestamp] = {};
+  fs.writeFileSync(dataJson, JSON.stringify(fileContent));
 }

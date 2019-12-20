@@ -20,7 +20,7 @@ START_MODE=$8
 DEBUG_PORT=$9
 MAVEN_M2_CACHE=.m2/repository
 FOLDER_NAME=${11}
-DEPLOYMENT_REGISTRY=${12}
+IMAGE_PUSH_REGISTRY=${12}
 MAVEN_SETTINGS=${13}
 
 WORKSPACE=/codewind-workspace
@@ -41,7 +41,7 @@ echo "*** START_MODE = $START_MODE"
 echo "*** DEBUG_PORT = $DEBUG_PORT"
 echo "*** FOLDER_NAME = $FOLDER_NAME"
 echo "*** LOG_FOLDER = $LOG_FOLDER"
-echo "*** DEPLOYMENT_REGISTRY = $DEPLOYMENT_REGISTRY"
+echo "*** IMAGE_PUSH_REGISTRY = $IMAGE_PUSH_REGISTRY"
 echo "*** MAVEN_SETTINGS = $MAVEN_SETTINGS"
 
 
@@ -92,18 +92,6 @@ function create() {
 					cp $mnt/cache/localm2cache.zip .
 					buildah rm $CACHE_CONTAINER_ID
 					echo "Finished downloading maven m2 cache to $ROOT"
-
-					echo "Extracting maven m2 cache to $ROOT"
-					unzip -q localm2cache.zip
-					rm -rf localm2cache.zip
-					echo "Finished extracting maven m2 cache to $ROOT"
-
-					# Verify maven m2 cache
-					if [ -d $MAVEN_M2_CACHE ]; then
-						echo "Maven m2 cache is set up for $ROOT"
-					else
-						echo "Maven m2 cache is not set up for $ROOT"
-					fi
 				else
 					echo "Maven m2 cache cannot be retrieved for spring project $ROOT because the cache image could not be pulled using buildah"
 				fi
@@ -113,26 +101,13 @@ function create() {
 				dockerPullExitCode=$?
 
 				if [ $dockerPullExitCode -eq 0 ]; then
-					echo "Finished pulling maven m2 cache image for $ROOT using docker"
-					echo "Maven m2 cache will be used for spring project $ROOT"
+					echo "Finished pulling cache image for $ROOT using docker"
+					echo "Cache will be used for spring project $ROOT"
 					CACHE_CONTAINER_ID=$(docker create ibmcom/codewind-java-project-cache)
-
 					echo "Downloading maven m2 cache to $ROOT"
 					docker cp $CACHE_CONTAINER_ID:/cache/localm2cache.zip .
+					echo "Finished downloading maven m2 cache to $ROOT"	
 					docker rm -f $CACHE_CONTAINER_ID
-					echo "Finished downloading maven m2 cache to $ROOT"
-
-					echo "Extracting maven m2 cache to $ROOT"
-					unzip -q localm2cache.zip
-					rm -rf localm2cache.zip
-					echo "Finished extracting maven m2 cache to $ROOT"
-
-					# Verify maven m2 cache
-					if [ -d $MAVEN_M2_CACHE ]; then
-						echo "Maven m2 cache is set up for $ROOT"
-					else
-						echo "Maven m2 cache is not set up for $ROOT"
-					fi
 				else
 					echo "Maven m2 cache cannot be retrieved for spring project $ROOT because the cache image could not be pulled using docker"
 				fi
@@ -171,10 +146,9 @@ function deployK8() {
 	parentDir=$( dirname $tmpChart )
 
 	# Render the chart template
-	helm template $tmpChart \
-		--name $project \
+	helm template $project $tmpChart \
 		--values=/file-watcher/scripts/override-values.yaml \
-		--set image.repository=$DEPLOYMENT_REGISTRY/$project \
+		--set image.repository=$IMAGE_PUSH_REGISTRY/$project \
 		--output-dir=$parentDir
 
 	# Get the Deployment and Service file
@@ -196,41 +170,39 @@ function deployK8() {
 	/file-watcher/scripts/kubeScripts/add-iterdev-to-chart.sh $deploymentFile "$projectName" "/scripts/new_entrypoint.sh"
 
 	# Push app container image to docker registry if one is set up
-	if [[ ! -z $DEPLOYMENT_REGISTRY ]]; then
+	if [[ ! -z $IMAGE_PUSH_REGISTRY ]]; then
 		# If there's an existing failed Helm release, delete it. See https://github.com/helm/helm/issues/3353
-		if [ "$( helm list $project --failed )" ]; then
+		if [ "$( helm list --failed -q | grep $project )" ]; then
 			$util updateAppState $PROJECT_ID $APP_STATE_STOPPING
-			helm delete $project --purge
+			helm delete $project
 		fi
 
 		# Build the docker image for the project
 		modifyDockerfileAndBuild
 
 		# Tag and push the image to the registry
-		$IMAGE_COMMAND push --tls-verify=false $project $DEPLOYMENT_REGISTRY/$project
+		$IMAGE_COMMAND push --tls-verify=false $project $IMAGE_PUSH_REGISTRY/$project
 
 		if [ $? -eq 0 ]; then
-			echo "Successfully tagged and pushed the application image $DEPLOYMENT_REGISTRY/$project"
+			echo "Successfully tagged and pushed the application image $IMAGE_PUSH_REGISTRY/$project"
 		else
-			echo "Error: $?, could not push application image $DEPLOYMENT_REGISTRY/$project" >&2
-			$util deploymentRegistryStatus $PROJECT_ID "buildscripts.invalidDeploymentRegistry"
-			$util updateBuildState $PROJECT_ID $BUILD_STATE_FAILED "buildscripts.invalidDeploymentRegistry"
+			echo "Error: $?, could not push application image $IMAGE_PUSH_REGISTRY/$project" >&2
+			$util imagePushRegistryStatus $PROJECT_ID "buildscripts.invalidImagePushRegistry"
+			$util updateBuildState $PROJECT_ID $BUILD_STATE_FAILED "buildscripts.invalidImagePushRegistry"
 			exit 3
 		fi
 
-		helm upgrade \
-			--install $project \
-			--recreate-pods \
-			$tmpChart
+		helm upgrade $project $tmpChart \
+			--install  \
+			--recreate-pods
 	else
 		# Build the docker image
 		modifyDockerfileAndBuild
 
 		# Install the image using Helm
-		helm upgrade \
-			--install $project \
-			--recreate-pods \
-			$tmpChart;
+		helm upgrade $project $tmpChart \
+			--install  \
+			--recreate-pods
 	fi
 
 	if [ $? -eq 0 ]; then
@@ -256,7 +228,7 @@ function deployK8() {
 			# Print the Helm status before deleting the release
 			helm status $project
 
-			helm delete $project --purge
+			helm delete $project
 			$util updateAppState $PROJECT_ID $APP_STATE_STOPPED "$errorMsg"
 			exit 3
 		fi
@@ -296,11 +268,10 @@ function dockerRun() {
 	$IMAGE_COMMAND run --network=codewind_network \
 		--entrypoint "/scripts/new_entrypoint.sh" \
 		--name $project \
-		-v "$workspace/.logs":/root/logs \
 		--expose 8080 -p 127.0.0.1::$DEBUG_PORT -P -dt $project
 	if [ $? -eq 0 ]; then
 		echo -e "Copying over source files"
-		docker cp "$WORKSPACE/$projectName" $project:/root/app
+		docker cp "$WORKSPACE/$projectName"/. $project:/root/app
 	fi
 
 }
@@ -565,7 +536,7 @@ elif [ "$COMMAND" == "remove" ]; then
 		echo "Killing app log process"
 		pgrep -f "kubectl logs -f" | xargs kill -9
 
-		helm delete $project --purge
+		helm delete $project
 
 	else
 		# Remove container

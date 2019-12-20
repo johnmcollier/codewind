@@ -19,6 +19,7 @@ const inflateAsync = promisify(zlib.inflate);
 const cwUtils = require('../../modules/utils/sharedFunctions');
 const Logger = require('../../modules/utils/Logger');
 const Project = require('../../modules/Project');
+const metricsService = require('../../modules/metricsService');
 const ProjectInitializerError = require('../../modules/utils/errors/ProjectInitializerError');
 const { ILLEGAL_PROJECT_NAME_CHARS } = require('../../config/requestConfig');
 const router = express.Router();
@@ -202,6 +203,7 @@ async function uploadFile(req, res) {
 router.post('/api/v1/projects/:id/upload/end', async (req, res) => {
   const projectID = req.sanitizeParams('id');
   const keepFileList = req.sanitizeBody('fileList');
+  const keepDirList = req.sanitizeBody('directoryList');
   const modifiedList = req.sanitizeBody('modifiedList') || [];
   const timeStamp = req.sanitizeBody('timeStamp');
   const IFileChangeEvent = [];
@@ -211,32 +213,55 @@ router.post('/api/v1/projects/:id/upload/end', async (req, res) => {
     const project = user.projectList.retrieveProject(projectID);
     if (project) {
       const pathToTempProj = path.join(global.codewind.CODEWIND_WORKSPACE, global.codewind.CODEWIND_TEMP_WORKSPACE, project.name);
-      // eslint-disable-next-line no-sync
-      if (!fs.existsSync(pathToTempProj)) {
-        log.info("Temporary project directory doesn't exist, not syncing any files");
-        res.status(404).send("No files have been synced");
+      const tempProjectExists = await fs.pathExists(pathToTempProj);
+      if (modifiedList.length === 0 && !tempProjectExists) {
+        log.info('Temporary project directory doesn\'t exist and modified list is empty, not syncing any files');
+        res.status(404).send('No files have been synced');
       } else {
+        const pathToProj = project.projectPath();
 
-        const currentFileList = await listFiles(pathToTempProj, '');
+        // Delete by directory
+        const currentDirectoryList = await recursivelyListFilesOrDirectories(true, pathToProj);
+        const directoriesToDelete = await getPathsToDelete(currentDirectoryList, keepDirList);
+        if (directoriesToDelete.length > 0) {
+          // Get the highest level directory
+          const topLevelDirectories = getTopLevelDirectories(directoriesToDelete);
+          log.info(`Removing locally deleted directories from project: ${project.name}, ID: ${project.projectID} - ` +
+          `${topLevelDirectories.join(', ')}`);
+          await deletePathsInArray(pathToProj, topLevelDirectories);
+        }
 
-        const filesToDeleteSet = new Set(currentFileList);
-        keepFileList.forEach((f) => filesToDeleteSet.delete(f));
-        const filesToDelete = Array.from(filesToDeleteSet);
-
-        log.info(`Removing locally deleted files from project: ${project.name}, ID: ${project.projectID} - ` +
+        // Delete by file
+        const currentFileList = await recursivelyListFilesOrDirectories(false, pathToProj);
+        const filesToDelete = await getPathsToDelete(currentFileList, keepFileList);
+        if (filesToDelete.length > 0) {
+          log.info(`Removing locally deleted files from project: ${project.name}, ID: ${project.projectID} - ` +
           `${filesToDelete.join(', ')}`);
-        // remove the file from pfe container
-        await Promise.all(
-          filesToDelete.map(oldFile => cwUtils.forceRemove(path.join(pathToTempProj, oldFile)))
-        );
+          // remove the files from pfe container
+          await deletePathsInArray(pathToProj, filesToDelete);
+        }
+
         res.sendStatus(200);
 
-        await syncToBuildContainer(project, filesToDelete, pathToTempProj, modifiedList, timeStamp, IFileChangeEvent, user, projectID);
+        await cwUtils.copyProject(pathToTempProj, path.join(project.workspace, project.directory), getMode(project));
 
+        if (project.injectMetrics) {
+          try {
+            await metricsService.injectMetricsCollectorIntoProject(project.projectType, path.join(project.workspace, project.directory));
+          } catch (error) {
+            log.warn(error);
+          }
+        }
+        await syncToBuildContainer(project, filesToDelete, modifiedList, timeStamp, IFileChangeEvent, user, projectID);
         timersyncend = Date.now();
         let timersynctime = (timersyncend - timersyncstart) / 1000;
         log.info(`Total time to sync project ${project.name} to build container is ${timersynctime} seconds`);
         timersyncstart = 0;
+        let updatedProject = {
+          projectID,
+          creationTime: timeStamp
+        }
+        await user.projectList.updateProject(updatedProject);
 
       }
     } else {
@@ -246,25 +271,65 @@ router.post('/api/v1/projects/:id/upload/end', async (req, res) => {
     log.error(err);
     res.status(500).send(err);
   }
-
-
-
 });
+
+function getPathsToDelete(existingPathArray, newPathArray) {
+  const pathsToDeleteSet = new Set(existingPathArray);
+  newPathArray.forEach((f) => pathsToDeleteSet.delete(f));
+  // if file is in a protected dir, do not delete it
+  pathsToDeleteSet.forEach((f) => {
+    if (fileIsProtected(f)) {
+      pathsToDeleteSet.delete(f)
+    }
+  })
+
+  return Array.from(pathsToDeleteSet);
+}
+
+function fileIsProtected(filePath) {
+  const protectedPrefixes = [".odo/", "node_modules/", ".m2/"];
+  return protectedPrefixes.some((prefix) => filePath.startsWith(prefix));
+}
+
+function getTopLevelDirectories(directoryArray) {
+  let topLevelDirArray = [];
+  directoryArray.forEach(dir => {
+    const existingTopLevelDirectories = topLevelDirArray.filter(rootDirectory => isSubdirectory(dir, rootDirectory));
+    if (existingTopLevelDirectories.length === 0) {
+      // if there are subdirectories of "dir" already in the topLevelDirArray remove them
+      topLevelDirArray = topLevelDirArray.filter(finalDir => !isSubdirectory(finalDir, dir));
+      topLevelDirArray.push(dir);
+    }
+  });
+  return topLevelDirArray;
+}
+
+function isSubdirectory(dir1, dir2) {
+  // returns true if dir2 is a subdirectory of dir1 or they are the same
+  const string = path.normalize(dir1 + '/');
+  const prefix = path.normalize(dir2 + '/');
+  return string.startsWith(prefix);
+}
+
+function deletePathsInArray(directory, arrayOfFiles) {
+  const promiseArray = arrayOfFiles.map(filePath => {
+    return cwUtils.forceRemove(path.join(directory, filePath));
+  });
+  return Promise.all(promiseArray);
+}
 
 function getMode(project) {
   return (project.extension && project.extension.config.needsMount) ? "777" : "";
 }
 
-async function syncToBuildContainer(project, filesToDelete, pathToTempProj, modifiedList, timeStamp, IFileChangeEvent, user, projectID) {
+async function syncToBuildContainer(project, filesToDelete, modifiedList, timeStamp, IFileChangeEvent, user, projectID) {
   // If the current project is being built, we do not want to copy the files as this will
   // interfere with the current build
   if (project.buildStatus != "inProgress") {
     const globalProjectPath = path.join(project.workspace, project.name);
     // We now need to remove any files that have been deleted from the global workspace
     await Promise.all(filesToDelete.map(oldFile => cwUtils.forceRemove(path.join(globalProjectPath, oldFile))));
-    // now move temp project to real project
-    await cwUtils.copyProject(pathToTempProj, path.join(project.workspace, project.directory), getMode(project));
-    let projectRoot = getProjectSourceRoot(project);
+    let projectRoot = cwUtils.getProjectSourceRoot(project);
     // need to delete from the build container as well
     if (!global.codewind.RUNNING_IN_K8S && project.projectType != 'docker' &&
       (!project.extension || !project.extension.config.needsMount)) {
@@ -278,88 +343,55 @@ async function syncToBuildContainer(project, filesToDelete, pathToTempProj, modi
         projectRoot
       );
     }
-    filesToDelete.forEach((f) => {
-      const data = {
-        path: f,
-        timestamp: timeStamp,
-        type: "DELETE",
-        directory: false
-      };
-      IFileChangeEvent.push(data);
-    });
-    modifiedList.forEach((f) => {
-      const data = {
-        path: f,
-        timestamp: timeStamp,
-        type: "MODIFY",
-        directory: false
-      };
-      IFileChangeEvent.push(data);
-    });
+    if (filesToDelete != undefined) {
+      filesToDelete.forEach((f) => {
+        const data = {
+          path: f,
+          timestamp: timeStamp,
+          type: "DELETE",
+          directory: false
+        };
+        IFileChangeEvent.push(data);
+      });
+    }
+    if (modifiedList != undefined) {
+      modifiedList.forEach((f) => {
+        const data = {
+          path: f,
+          timestamp: timeStamp,
+          type: "MODIFY",
+          directory: false
+        };
+        IFileChangeEvent.push(data);
+      });
+    }
     user.fileChanged(projectID, timeStamp, 1, 1, IFileChangeEvent);
   } else {
     // if a build is in progress, wait 5 seconds and try again
     await cwUtils.timeout(5000)
-    await syncToBuildContainer(project, filesToDelete, pathToTempProj, modifiedList, timeStamp, IFileChangeEvent, user, projectID);
+    await syncToBuildContainer(project, filesToDelete, modifiedList, timeStamp, IFileChangeEvent, user, projectID);
   }
 }
 
-// List all the files under the given directory, return
-// a list of relative paths.
-async function listFiles(absolutePath, relativePath) {
-  const files = await fs.readdir(absolutePath);
-  const fileList = [];
-  for (const f of files) {
-    const nextRelativePath = path.join(relativePath, f);
-    const nextAbsolutePath = path.join(absolutePath, f);
-
-
-    // eslint-disable-next-line no-await-in-loop
+// List all the files or directories under a given directory
+async function recursivelyListFilesOrDirectories(getDirectories, absolutePath, relativePath = '') {
+  const directoryContents = await fs.readdir(absolutePath);
+  const completePathArray = await Promise.all(directoryContents.map(async dir => {
+    const pathList = [];
+    const nextRelativePath = path.join(relativePath, dir);
+    const nextAbsolutePath = path.join(absolutePath, dir);
     const stats = await fs.stat(nextAbsolutePath);
     if (stats.isDirectory()) {
-      // eslint-disable-next-line no-await-in-loop
-      const subFiles = await listFiles(nextAbsolutePath, nextRelativePath);
-      fileList.push(...subFiles);
-    } else {
-      fileList.push(nextRelativePath)
+      const subDirectories = await recursivelyListFilesOrDirectories(getDirectories, nextAbsolutePath, nextRelativePath);
+      if (getDirectories) pathList.push(nextRelativePath);
+      pathList.push(...subDirectories);
+    } else if (!getDirectories) {
+      pathList.push(nextRelativePath);
     }
-  }
-  return fileList;
+    return pathList;
+  }))
+  return completePathArray.reduce((a, b) => a.concat(b), []);
 }
-
-
-function getProjectSourceRoot(project) {
-  let projectRoot = "";
-  switch (project.projectType) {
-  case 'nodejs': {
-    projectRoot = "/app";
-    break
-  }
-  case 'liberty': {
-    projectRoot = "/home/default/app";
-    break
-  }
-  case 'swift': {
-    projectRoot = "/swift-project";
-    break
-  }
-  case 'spring': {
-    projectRoot = "/root/app";
-    break
-  }
-  case 'docker': {
-    projectRoot = "/code";
-    break
-  }
-  default: {
-    projectRoot = "/";
-    break
-  }
-  }
-  return projectRoot;
-}
-
-
 
 /**
  * API Function to complete binding a given project on a file system visible
@@ -382,11 +414,17 @@ async function bindEnd(req, res) {
       res.status(404).send(`Unable to find project ${projectID}`);
       return;
     }
-
     const pathToCopy = path.join(global.codewind.CODEWIND_WORKSPACE, global.codewind.CODEWIND_TEMP_WORKSPACE, project.name);
     // now move temp project to real project
     await cwUtils.copyProject(pathToCopy, path.join(project.workspace, project.directory), getMode(project));
 
+    if (project.injectMetrics) {
+      try {
+        await metricsService.injectMetricsCollectorIntoProject(project.projectType, path.join(project.workspace, project.directory));
+      } catch (error) {
+        log.warn(error);
+      }
+    }
     // debug logic to identify bind time
     timerbindend = Date.now();
     let totalbindtime = (timerbindend - timerbindstart) / 1000;

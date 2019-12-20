@@ -329,7 +329,7 @@ export async function isContainerActive(containerName: string, projectInfo?: Pro
  * @returns Promise<ProcessResult>
  */
 export async function deleteHelmRelease(projectID: string, releaseName: string): Promise<ProcessResult> {
-    const deleteRelease: string[] = ["delete", "--purge", releaseName];
+    const deleteRelease: string[] = ["delete", releaseName];
     let response: ProcessResult;
 
     // Remove deployment
@@ -379,8 +379,8 @@ export async function printHelmStatus(projectID: string, releaseName: string): P
  *
  * @returns Promise<ProcessResult>
  */
-export async function installChart(projectID: string, deploymentName: string, chartLocation: string, deploymentRegistry: string): Promise<ProcessResult> {
-    const installDeployment: string[] = ["upgrade", "--install", deploymentName, "--recreate-pods", "--values=/file-watcher/scripts/override-values.yaml", "--set", "image.repository=" + deploymentRegistry + "/" + deploymentName, chartLocation];
+export async function installChart(projectID: string, deploymentName: string, chartLocation: string, imagePushRegistry: string): Promise<ProcessResult> {
+    const installDeployment: string[] = ["upgrade", deploymentName, chartLocation, "--install", "--recreate-pods", "--values=/file-watcher/scripts/override-values.yaml", "--set", "image.repository=" + imagePushRegistry + "/" + deploymentName];
     let response: ProcessResult;
 
     // Install deployment
@@ -405,7 +405,7 @@ export async function exposeOverIngress(projectID: string, isHTTPS: boolean, app
     try {
         let resp: any = undefined;
 
-        // Get the deployment name and uid labaled with the unique project ID
+        // Get the deployment name and uid labeled with the unique project ID
         resp = await k8sClient.apis.apps.v1.namespaces(KUBE_NAMESPACE).deployments.get({ qs: { labelSelector: "projectID=" + projectID } });
         ownerReferenceName = resp.body.items[0].metadata.name;
         ownerReferenceUID = resp.body.items[0].metadata.uid;

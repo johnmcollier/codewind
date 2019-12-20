@@ -40,8 +40,15 @@ RUN npm run build
 
 FROM node:10-alpine
 
+LABEL org.opencontainers.image.title="Codewind-Performance" org.opencontainers.image.description="Codewind Performance" \
+      org.opencontainers.image.url="https://codewind.dev/" \
+      org.opencontainers.image.source="https://github.com/eclipse/codewind"
+
 # Create app directory
 WORKDIR /usr/src/app
+
+# Copy env file
+COPY .env /usr/src/app/.env
 
 # Copy our license files into the new image
 COPY LICENSE NOTICE.md ./
@@ -52,17 +59,18 @@ COPY package*.json server.js ./
 RUN npm ci --only=production
 
 # Install performance UIs by copying over the built applications
-
 COPY --from=build-performance-ui /usr/src/app/dashboard/build /usr/src/app/dashboard/build
 
+COPY monitor /usr/src/app/monitor
 
-
+COPY utils /usr/src/app/utils
 
 # Install npm production packages
-COPY loadrunner/package.json /usr/src/app/
-COPY loadrunner/runload.js /usr/src/app/
+COPY package.json loadrunner/runload.js /usr/src/app/
 RUN npm ci --production
 
+ARG IMAGE_BUILD_TIME
+ENV IMAGE_BUILD_TIME=${IMAGE_BUILD_TIME}
 ENV NODE_ENV production
 ENV PORT 9095
 

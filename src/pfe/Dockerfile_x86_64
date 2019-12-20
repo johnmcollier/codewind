@@ -8,23 +8,27 @@
 # Contributors:
 #     IBM Corporation - initial API and implementation
 #*******************************************************************************
-#FROM centos:7
+#FROM centos as codewind-pfe-base
 
-FROM centos@sha256:b5e66c4651870a1ad435cd75922fe2cb943c9e973a9673822d1414824a1d0475 as codewind-pfe-base
-LABEL org.label-schema.name="Codewind PFE" org.label-schema.description="Codewind PFE" \
-      org.label-schema.url="https://codewind.dev/" \
-      org.label-schema.vcs-url="https://github.com/eclipse/codewind" org.label-schema.vendor="IBM"
+FROM centos@sha256:f94c1d992c193b3dc09e297ffd54d8a4f1dc946c37cbeceb26d35ce1647f88d9 as codewind-pfe-base
+LABEL org.opencontainers.image.title="Codewind-PFE" org.opencontainers.image.description="Codewind PFE" \
+      org.opencontainers.image.url="https://codewind.dev/" \
+      org.opencontainers.image.source="https://github.com/eclipse/codewind"
 
-ARG BUILDAH_RPM=https://cbs.centos.org/kojifiles/packages/buildah/1.11.2/2.git0bafbfe.el7/x86_64/buildah-1.11.2-2.git0bafbfe.el7.x86_64.rpm
+ARG BUILDAH_RPM=https://cbs.centos.org/kojifiles/packages/buildah/1.11.4/4.el7/x86_64/buildah-1.11.4-4.el7.x86_64.rpm
+ARG SLIRP=https://cbs.centos.org/kojifiles/packages/slirp4netns/0.3.0/2.git4992082.el7/x86_64/slirp4netns-0.3.0-2.git4992082.el7.x86_64.rpm
+ARG LIBSEC=https://cbs.centos.org/kojifiles/packages/libseccomp/2.4.1/0.el7/x86_64/libseccomp-2.4.1-0.el7.x86_64.rpm
 
 # Download the buildah RPM
 RUN curl -f -o buildah.rpm $BUILDAH_RPM
+RUN curl -f -o slirp4netns.rpm $SLIRP
+RUN curl -f -o libseccomp.rpm $LIBSEC
 
 # Download and set up Node 10.x RPM
 RUN curl -sL https://rpm.nodesource.com/setup_10.x | bash -
 
 RUN yum install -y epel-release \
-    && yum -y --enablerepo=epel install zip unzip sudo ca-certificates openssl nodejs buildah.rpm \
+    && yum -y --enablerepo=epel install zip unzip sudo ca-certificates openssl nodejs slirp4netns.rpm libseccomp.rpm buildah.rpm \
     && yum clean all \
     && rm -rf /var/cache/yum
 
@@ -64,14 +68,14 @@ RUN curl -LO https://storage.googleapis.com/kubernetes-release/release/$(curl -s
     && chmod +x ./kubectl \
     && mv ./kubectl /usr/local/bin/kubectl
 
-# Install helm, fixed to the 2.9.1 version
+# Install helm, fixed to the 3.0.0 version
 RUN cd /tmp \ 
-    && curl -O https://get.helm.sh/helm-v2.9.1-linux-amd64.tar.gz \
-    && echo '56ae2d5d08c68d6e7400d462d6ed10c929effac929fedce18d2636a9b4e166ba  helm-v2.9.1-linux-amd64.tar.gz' | sha256sum -c - \
-    && tar -xvf helm-v2.9.1-linux-amd64.tar.gz \
+    && curl -O https://get.helm.sh/helm-v3.0.0-linux-amd64.tar.gz \
+    && echo '10e1fdcca263062b1d7b2cb93a924be1ef3dd6c381263d8151dd1a20a3d8c0dc  helm-v3.0.0-linux-amd64.tar.gz' | sha256sum -c - \
+    && tar -xvf helm-v3.0.0-linux-amd64.tar.gz \
     && cp /tmp/linux-amd64/helm /usr/local/bin/helm \
     && chmod +x /usr/local/bin/helm \
-    && rm -rf /tmp/linux-amd64 /tmp/helm-v2.9.1-linux-amd64.tar.gz
+    && rm -rf /tmp/linux-amd64 /tmp/helm-v3.0.0-linux-amd64.tar.gz
 
 WORKDIR /
 # Softlink to /codewind-workspace to /projects so paths
@@ -121,9 +125,11 @@ COPY /portal/npm-start.sh /portal/nodemon.json /portal/
 COPY /portal/eslint-rules /portal/eslint-rules
 RUN chmod -R +rx /portal/npm-start.sh
 
+COPY /portal/.env /portal/.env
 COPY /portal/server.js /portal/
 COPY /portal/modules /portal/modules
 COPY /portal/routes /portal/routes
+COPY /portal/controllers /portal/controllers
 COPY /portal/config /portal/config
 COPY /portal/middleware /portal/middleware
 COPY /portal/docs /portal/docs
@@ -141,7 +147,9 @@ COPY /portal/NOTICE.md /
 
 WORKDIR /portal
 ARG NODE_ENV
+ARG IMAGE_BUILD_TIME
 ENV NODE_ENV=${NODE_ENV}
+ENV IMAGE_BUILD_TIME=${IMAGE_BUILD_TIME}
 RUN npm ci \
     && npm cache clean -f
 

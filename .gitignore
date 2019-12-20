@@ -15,9 +15,14 @@ src/performance/webclient/build/
 test/coverage
 test/test-results.xml
 test/tmp.json
+test/resources/codewind-license-data/bin/*
 src/performance/LICENSE
 src/performance/NOTICE.md
 src/pfe/portal/LICENSE
 src/pfe/portal/NOTICE.md
 src/initialize/LICENSE
 src/initialize/NOTICE.md
+src/keycloak/LICENSE
+src/keycloak/NOTICE.md
+src/gatekeeper/LICENSE
+src/gatekeeper/NOTICE.md

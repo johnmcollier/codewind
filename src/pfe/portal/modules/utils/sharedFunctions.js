@@ -20,7 +20,7 @@ const exec = promisify(require('child_process').exec);
 
 // This if statement allows us to only include one utils function, exporting either
 //      the Docker of K8s one depending on which environment we're in
-module.exports = require((global.codewind.RUNNING_IN_K8S ? './kubernetesFunctions' : './dockerFunctions'));
+module.exports = require((global.codewind && global.codewind.RUNNING_IN_K8S ? './kubernetesFunctions' : './dockerFunctions'));
 
 // variable to do a async timeout
 module.exports.timeout = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -115,36 +115,31 @@ module.exports.copyProject = async function copyFile(fromProjectPath, toProjectP
   await module.exports.forceRemove(fromProjectPath)
 }
 
-/** C:\helloThere -> /c/helloThere */
-module.exports.convertFromWindowsDriveLetter = function convertFromWindowsDriveLetter(absolutePath) {
-
-  if (!isWindowsAbsolutePath(absolutePath)) {
-    return absolutePath;
-  }
-  let temp;
-  // Replace \ with /
-  temp = convertBackSlashesToForwardSlashes(absolutePath);
-  const char0 = temp.charAt(0);
-  // Strip first two characters
-  temp = temp.substring(2);
-  temp = "/" + char0.toLowerCase() + temp;
-  return temp;
-
-}
-
 /**
  * Force remove a path, regardless of whether it exists, or it's file or directory that may or may not be empty.
  * Better than fs-extra fs.remove as it won't recurse down each directory tree and take over the event loop
- * 
+ *
  * @param {string} path, path to remove
  */
 module.exports.forceRemove = async function forceRemove(path) {
   try {
-    await exec(`rm -rf ${path}`);
+    await exec(`rm -rf "${path}"`);
   }
   catch (err) {
     log.warn(err.message);
   }
+}
+
+/** C:\helloThere -> /c/helloThere */
+function convertFromWindowsDriveLetter(windowsPath) {
+  if (!isWindowsAbsolutePath(windowsPath)) {
+    return windowsPath;
+  }
+  let linuxPath = convertBackSlashesToForwardSlashes(windowsPath);
+  const char0 = linuxPath.charAt(0);
+  linuxPath = linuxPath.substring(2);
+  linuxPath = "/" + char0.toLowerCase() + linuxPath;
+  return linuxPath;
 }
 
 function convertBackSlashesToForwardSlashes(str) {
@@ -169,3 +164,40 @@ function isLetter(currentChar) {
   return ("a" <= currentChar && currentChar <= "z")
       || ("A" <= currentChar && currentChar <= "Z");
 }
+
+module.exports.getProjectSourceRoot = function getProjectSourceRoot(project) {
+  let projectRoot = "";
+  switch (project.projectType) {
+  case 'nodejs': {
+    projectRoot = "/app";
+    break
+  }
+  case 'liberty': {
+    projectRoot = "/home/default/app";
+    break
+  }
+  case 'swift': {
+    projectRoot = "/swift-project";
+    break
+  }
+  case 'spring': {
+    projectRoot = "/root/app";
+    break
+  }
+  case 'docker': {
+    projectRoot = "/code";
+    break
+  }
+  default: {
+    projectRoot = "/";
+    break
+  }
+  }
+  return projectRoot;
+}
+
+const deepClone = (obj) => JSON.parse(JSON.stringify(obj));
+
+module.exports.convertFromWindowsDriveLetter = convertFromWindowsDriveLetter;
+module.exports.isWindowsAbsolutePath = isWindowsAbsolutePath;
+module.exports.deepClone = deepClone;

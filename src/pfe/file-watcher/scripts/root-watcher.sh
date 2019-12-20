@@ -82,29 +82,21 @@ mkdir -p $CONTAINER_WORKSPACE_DIRECTORY/.logs
 cache_liberty > /codewind-workspace/.logs/liberty-app-cache.log 2>&1 &
 cache_spring > /codewind-workspace/.logs/spring-app-cache.log 2>&1 &
 
-# If running in Kubernetes, initialize helm
+# Create dir for docker config
+echo "Creating /root/.docker/ for docker config"
+mkdir -p /root/.docker/
+
+# If running in Kubernetes, check if there is a registry secret to pull down
 if [ "$IN_K8" == "true" ]; then
 
-	# We are going to use a custom tiller in the namespace
-	# because we do not have cluster role binding for our Che
-	# workspace namespace and cannot access the cluster-scoped tiller
-	echo "Initializing a custom helm tiller"
-	helm init --upgrade --service-account $SERVICE_ACCOUNT_NAME
-
-	# Copy the secret's config json file over
-	echo "Copying the docker registry secrets over"
-	if [ -e /tmp/secret/.dockerconfigjson ]; then
-		mkdir -p /root/.docker/
-		cp /tmp/secret/.dockerconfigjson /root/.docker/config.json
-	elif [ -e /tmp/secret/.dockercfg ]; then
-		cp /tmp/secret/.dockercfg /root/.dockercfg
-	fi
-
-	# Use a helm wrapper if TLS selected for helm
-	if [[ "$USE_HELM_TLS" == "true" ]]; then
-		echo "Creating Helm TLS wrapper"
-		mv /usr/local/bin/helm /usr/local/bin/_helm
-		cp /file-watcher/scripts/wrappers/helm_wrapper.sh /usr/local/bin/helm
-		chmod +x /usr/local/bin/helm
+	# Check if there is a secret with labels app=codewind-pfe and codewindWorkspace=<workspace_id>
+	# Create docker config from the secret if it exists, this is done to handle Pod restarts
+	echo "Checking to see if a secret is present with labels app=codewind-pfe,codewindWorkspace="$CHE_WORKSPACE_ID
+	SECRET=$( kubectl get secret --selector=app=codewind-pfe,codewindWorkspace=$CHE_WORKSPACE_ID )
+	if [[ $SECRET = *$CHE_WORKSPACE_ID* ]]; then
+		SECRET_NAME=$( kubectl get secret --selector=app=codewind-pfe,codewindWorkspace=$CHE_WORKSPACE_ID -o jsonpath="{.items[0].metadata.name}" )
+		echo "A secret with the matching label has been found: $SECRET_NAME"
+		echo "Creating the Codewind PFE Docker Config with the secret .dockerconfigjson data"
+		kubectl get secret $SECRET_NAME -o jsonpath="{.data.\.dockerconfigjson}" | base64 --decode > /root/.docker/config.json
 	fi
 fi

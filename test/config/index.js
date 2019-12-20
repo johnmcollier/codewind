@@ -15,8 +15,13 @@ const { execSync } = require('child_process');
 // via the env var.
 let CONTAINER_HOST_INFO = {};
 if (!process.env.CODEWIND_URL) {
-    const CONTAINER_HOST_STDOUT = execSync(`docker inspect --format='{{json (index (index .NetworkSettings.Ports "9090/tcp") 0)}}' codewind-pfe`);
-    CONTAINER_HOST_INFO = JSON.parse(CONTAINER_HOST_STDOUT);
+    try {
+        const CONTAINER_HOST_STDOUT = execSync(`docker inspect --format='{{json (index (index .NetworkSettings.Ports "9090/tcp") 0)}}' codewind-pfe`);
+        CONTAINER_HOST_INFO = JSON.parse(CONTAINER_HOST_STDOUT);
+    } catch (error) {
+        // So that unit tests can run even if codewind-pfe is not started
+        // console.log(error);
+    }
 }
 
 const CODEWIND_URL = process.env.CODEWIND_URL || `http://${CONTAINER_HOST_INFO.HostIp}:${CONTAINER_HOST_INFO.HostPort}`;
@@ -95,6 +100,16 @@ const templateOptions = {
 };
 
 
+
+const packageJsons = {
+    'performance-server': path.resolve(__dirname, '../../src/performance'),
+    'performance-loadrunner': path.resolve(__dirname, '../../src/performance/loadrunner'),
+    'performance-dashboard': path.resolve(__dirname, '../../src/performance/dashboard'),
+    'file-watcher': path.resolve(__dirname, '../../src/pfe/file-watcher/server'),
+    'codewind-portal': path.resolve(__dirname, '../../src/pfe/portal'),
+};
+
+
 module.exports = {
     CODEWIND_URL,
     CODEWIND_HOST,
@@ -113,4 +128,5 @@ module.exports = {
     MOCK_LOADTEST_DIR,
     pathToApiSpec,
     templateOptions,
+    packageJsons,
 };

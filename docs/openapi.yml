@@ -257,7 +257,7 @@ paths:
           schema:
             $ref: '#/components/schemas/ProjectID'
           required: true
-          description: id of the project        
+          description: id of the project
       responses:
         202:
           description: >
@@ -266,10 +266,10 @@ paths:
           description: Project with given projectiD was not found.
         500:
           description: Any other error
-  
+
   /api/v1/projects/{id}/upload:
     put:
-      summary: Receive gzipped content of a file for the project and write this to the codewind workspace 
+      summary: Receive gzipped content of a file for the project and write this to the codewind workspace
       parameters:
         - name: id
           in: path
@@ -278,19 +278,19 @@ paths:
           required: true
           description: id of project
       requestBody:
-          description: JSON object containing file info and content 
+          description: JSON object containing file info and content
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Upload'
-    
+
       responses:
         200:
           description: The file upload was successful
         404:
           description: Project with given projectID not found
         500:
-          description: Any other error  
+          description: Any other error
 
   /api/v1/projects/{id}/upload/end:
     post:
@@ -305,7 +305,7 @@ paths:
           required: true
           description: id of the project
       requestBody:
-          description: JSON object containing project information  
+          description: JSON object containing project information
           content:
             application/json:
               schema:
@@ -318,7 +318,7 @@ paths:
           description: Project with given projectiD was not found.
         500:
           description: Any other error
- 
+
 
   /api/v1/projects/{id}:
     get:
@@ -813,6 +813,40 @@ paths:
         500:
           description: Internal error
 
+  /api/v1/projects/{id}/metrics/inject:
+    post:
+      summary: Enable auto injection of metrics
+      description: >
+        Injects metrics collector into project, or remove injected collector from project
+      parameters:
+        - name: id
+          in: path
+          schema:
+            type: string
+          required: true
+          description: id of project
+      requestBody:
+        description: Value indicating whether metrics should be injected
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - enable
+              properties:
+                enable:
+                  type: boolean
+      responses:
+        202:
+          description: Successful update of project information and build triggered
+          content:
+            application/json:
+              schema:
+                type: object
+        404:
+          description: Project not found
+
+
   /api/v1/projects/{id}/metrics/types:
     post:
       summary: Get project metrics of a certain type
@@ -970,6 +1004,12 @@ paths:
                   $ref: '#/components/schemas/TemplateRepo'
         400:
           description: Bad request
+        404:
+          description: Template repository not found
+          content:
+            text/html:
+              schema:
+                type: string
   /api/v1/batch/templates/repositories:
     patch:
       summary: Batch change settings for a template repository of which Codewind is aware
@@ -1186,10 +1226,142 @@ paths:
           $ref: '#/components/responses/404'
         500:
           $ref: '#/components/responses/500'
-
-  /api/v1/registry:
+  /api/v1/registrysecrets:
+    post:
+      summary: Create a Docker registry secret in Codewind PFE
+      description: >
+        This will create or update the Codewind PFE Docker config registry `/root/.docker/config.json`. In Kubernetes environment, a secret is then created with the base64 encoded value of the Docker config file and the Service Account is then patched with the created Kubernetes secret.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - address
+                - credentials
+              properties:
+                address:
+                  type: string
+                credentials:
+                  type: string
+                  description: base64 encoded value of object { username:"username", password:"password" }
+      responses:
+        201:
+          description: Successfully created. Returns an updated list of the registry secrets in Codewind PFE.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    address:
+                      type: string
+                      description: Registry address
+                      example: docker.io
+                    username:
+                      type: string
+                      description: Registry username
+                      example: username
+        400:
+          description: Bad Request
+          content:
+            text/plain:
+              schema:
+                type: string
+                description: Reason for the bad request
+                example: Cannot have multiple docker registries with url <url>. Please delete the previous registry and try again.
+        500:
+          description: Internal Server Error
+          content:
+            text/plain:
+              schema:
+                type: string
+                description: Reason for the internal error
+                example: Failed to create the Codewind Registry Kubernetes Secret and/or patch the Service Account.
     get:
-      summary: Get the status of the Deployment Registry in the Workspace Settings File
+      summary: Get all the Docker registry secrets in Codewind PFE
+      description: >
+        This will get the Docker registry secrets in Codewind PFE. The API returns a list of the available registries in the PFE container.
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    address:
+                      type: string
+                      description: Registry address
+                      example: docker.io
+                    username:
+                      type: string
+                      description: Registry username
+                      example: username
+        500:
+          description: Internal Server Error
+          content:
+            text/plain:
+              schema:
+                type: string
+                description: Reason for the internal error
+                example: Failed to get the Codewind Docker Config Registries
+    delete:
+      summary: Delete a Docker registry secret from Codewind PFE
+      description: >
+        This will update the Codewind PFE Docker config registry `/root/.docker/config.json` and remove the specified secret. In Kubernetes environment, a secret is then created with the base64 encoded value of the Docker config file and the Service Account is then patched with the created Kubernetes secret.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - address
+              properties:
+                address:
+                  type: string
+      responses:
+        200:
+          description: OK. Returns an updated list of the registry secrets in Codewind PFE.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    address:
+                      type: string
+                      description: Registry address
+                      example: docker.io
+                    username:
+                      type: string
+                      description: Registry username
+                      example: username
+        400:
+          description: Bad Request
+          content:
+            text/plain:
+              schema:
+                type: string
+                description: Reason for the bad request
+                example: No Docker Config file present, no Docker Registry to remove from the list.
+        500:
+          description: Internal Server Error
+          content:
+            text/plain:
+              schema:
+                type: string
+                description: Reason for the internal error
+                example: Failed to create the Codewind Registry Kubernetes Secret and/or patch the Service Account.
+
+
+  /api/v1/imagepushregistry:
+    get:
+      summary: Get the status of the Image Push Registry in the Workspace Settings File
       responses:
         200:
           description: Successfully completed
@@ -1198,14 +1370,18 @@ paths:
               schema:
                 type: object
                 properties:
-                  statusCode:
-                    type: integer
-                    description: The response status code
-                    example: 200
-                  deploymentRegistry:
+                  imagePushRegistry:
                     type: boolean
-                    description: true if deployment registry was set
+                    description: true if image push registry was set
                     example: true
+                  address:
+                    type: string
+                    description: registry address, if image push registry is true
+                    example: "docker.io"
+                  namespace:
+                    type: string
+                    description: registry namespace, if image push registry is true
+                    example: "docker.io"
         500:
           description: Internal Server Error
           content:
@@ -1213,19 +1389,15 @@ paths:
               schema:
                 type: object
                 properties:
-                  statusCode:
-                    type: integer
-                    description: The response status code
-                    example: 400
-                  deploymentRegistry:
+                  imagePushRegistry:
                     type: boolean
-                    description: false if deployment registry was not set
+                    description: false if image push registry was not set
                     example: false
     post:
-      summary: Test or set the specified Deployment Registry
+      summary: Test or set the specified Image Push Registry
       description: >
-        On test the API also emits a socket event `deploymentRegistryStatus` with data
-        `{deploymentRegistryTest ":" true, msg ":" message related to the socket for pass/failure}`
+        On test the API also emits a socket event `imagePushRegistryStatus` with data
+        `{imagePushRegistryTest ":" true, msg ":" message related to the socket for pass/failure}`
         A set operation will set the registry without testing to allow the client to force save the
         value.
       requestBody:
@@ -1234,9 +1406,12 @@ paths:
             schema:
               type: object
               required:
-                - deploymentRegistry
+                - address
+                - namespace
               properties:
-                deploymentRegistry:
+                address:
+                  type: string
+                namespace:
                   type: string
                 operation:
                   type: string
@@ -1255,9 +1430,9 @@ paths:
                     type: integer
                     description: The response status code
                     example: 200
-                  deploymentRegistryTest:
+                  imagePushRegistryTest:
                     type: boolean
-                    description: true if deployment registry is valid
+                    description: true if image push registry is valid
                     example: true
                   msg:
                     type: string
@@ -1274,7 +1449,7 @@ paths:
                     type: integer
                     description: The response status code
                     example: 400
-                  deploymentRegistryTest:
+                  imagePushRegistryTest:
                     type: boolean
                     description: false because it is a bad request
                     example: false
@@ -1293,9 +1468,9 @@ paths:
                     type: integer
                     description: The response status code
                     example: 500
-                  deploymentRegistryTest:
+                  imagePushRegistryTest:
                     type: boolean
-                    description: false if deployment registry is invalid
+                    description: false if image push registry is invalid
                     example: false
                   msg:
                     type: string
@@ -1525,6 +1700,7 @@ components:
       required:
         - timestamp
         - fileList
+        - directoryList
         - modifiedList
       properties:
         timestamp:
@@ -1535,11 +1711,15 @@ components:
           description: an array of all files the project contains
           type: array
           example: ["/project/file1", "/project/file2", "project/modifiedfile1"]
+        directoryList:
+          description: an array of all directories the project contains
+          type: array
+          example: ["/project"]
         modifiedList:
           description: an array of files that have been modified since the last project upload
           type: array
           example: ["/project/modifiedfile1"]
-      
+
     Upload:
       type: object
       required:
@@ -1558,7 +1738,7 @@ components:
           type: number
           description: the permissions for the file https://nodejs.org/api/fs.html#fs_file_modes
           example: 0o775
-     
+
     LoadrunnerConfig:
       type: object
       required:
@@ -1598,7 +1778,7 @@ components:
               example: { id: 1, message: 'codewind' }
             - type: string
               example: "{ id: 1, message: 'codewind'}"
-    
+
     LogDetails:
       type: object
       required:
@@ -1616,6 +1796,7 @@ components:
         - pathToMonitor
         - ignoredPaths
         - projectWatchStateId
+        - projectCreationTime
       properties:
         projectID:
           $ref: '#/components/schemas/ProjectID'
@@ -1632,6 +1813,10 @@ components:
           type: string
           format: uuid
           example: "e3f3ba629b5a9e75ebb0818934575a66"
+        projectCreationTime:
+          description: the time in millisconds since epoch that the project was last updated in codewind
+          type: number
+          example: 1576080088223
     FileChangeList:
         type: object
         required:
