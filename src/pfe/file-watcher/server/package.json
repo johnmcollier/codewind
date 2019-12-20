@@ -49,7 +49,8 @@
     "moment-timezone": "^0.5.17",
     "stack-trace": "0.0.10",
     "xml2js": "~0.4.19",
-    "xss": "^1.0.3"
+    "xss": "^1.0.3",
+    "pem": "^1.14.2"
   },
   "devDependencies": {
     "@types/async-lock": "^1.1.1",
@@ -63,6 +64,7 @@
     "@types/moment-timezone": "^0.5.6",
     "@types/ms": "^0.7.30",
     "@types/node": "^10.5.1",
+    "@types/pem": "^1.9.3",
     "@types/request": "^2.48.1",
     "@types/stack-trace": "0.0.29",
     "@types/xml2js": "^0.4.3",
