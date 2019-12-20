@@ -490,65 +490,70 @@ export async function exposeOverIngress(projectID: string, isHTTPS: boolean, app
         if (isHTTPS) {
             const secretName = serviceName;
 
-            let resp = await k8sClient.api.v1.namespaces(process.env.KUBE_NAMESPACE).secret(secretName).get();
-            console.log("*** RESP " + resp);
-            if (resp.body.Items === 0) {
-                // Couldn't find a secret, so create one
-                // Generate the self-signed certificate with openssl
-                let encodedKey: string;
-                let encodedCert: string;
-                let secret: any;
-                pem.createCertificate({ selfSigned: true}, (err, keys) => {
-                    if (err) {
-                        throw err;
-                    }
+            // Couldn't find a secret, so create one
+            // Generate the self-signed certificate with openssl
+            let encodedKey: string;
+            let encodedCert: string;
+            let secret: any;
 
-                    // base 64 encode the certificate
-                    encodedKey = Buffer.from(keys.serviceKey).toString("base64");
-                    encodedCert = Buffer.from(keys.certificate).toString("base64");
-
-                    // Create the secret
-                    // Create the new secret with the encoded data
-                    secret = {
-                        "apiVersion": "v1",
-                        "kind": "Secret",
-                        "metadata": {
-                        "labels": {
-                            "app": "codewind-pfe",
-                            "codewindWorkspace": process.env.CHE_WORKSPACE_ID
-                        },
-                        "name": `${secretName}`,
-                        "ownerReferences": [
-                            {
-                            "apiVersion": "apps/v1",
-                            "blockOwnerDeletion": true,
-                            "controller": true,
-                            "kind": "ReplicaSet",
-                            "name": `${ownerReferenceName}`,
-                            "uid": `${ownerReferenceUID}`
-                            }
-                        ]
-                        },
-                        "type": "kubernetes.io/dockerconfigjson",
-                        "data": {
-                            "tls.crt": `${encodedCert}`,
-                            "tls.key": `${encodedKey}`
-                        }
-                    };
-                });
-                resp = await k8sClient.api.v1.namespaces(process.env.KUBE_NAMESPACE).secret.post({body: secret});
-
+            // If an old secret already exists, delete it first
+            const resp = await k8sClient.api.v1.namespaces(process.env.KUBE_NAMESPACE).secrets.get({ qs: { labelSelector: "projectID=" + projectID } });
+            if (resp.body.items.length > 0) {
+                await k8sClient.api.v1.namespaces(process.env.KUBE_NAMESPACE).secrets(secretName).delete();
             }
 
-            ingress.spec.tls = [
-                {
-                    "hosts": [
-                        `${ingressDomain}`
-                    ],
-                    "secretName": `${secretName}`
+            pem.createCertificate({ selfSigned: true}, (err, keys) => {
+                if (err) {
+                    throw err;
                 }
-            ];
+
+                // base 64 encode the certificate
+                encodedKey = Buffer.from(keys.serviceKey).toString("base64");
+                encodedCert = Buffer.from(keys.certificate).toString("base64");
+
+                // Create the secret
+                // Create the new secret with the encoded data
+                secret = {
+                    "apiVersion": "v1",
+                    "kind": "Secret",
+                    "metadata": {
+                    "labels": {
+                        "projectID": `${projectID}`
+                    },
+                    "name": `${secretName}`,
+                    "ownerReferences": [
+                        {
+                        "apiVersion": "apps/v1",
+                        "blockOwnerDeletion": true,
+                        "controller": true,
+                        "kind": "ReplicaSet",
+                        "name": `${ownerReferenceName}`,
+                        "uid": `${ownerReferenceUID}`
+                        }
+                    ]
+                    },
+                    "type": "kubernetes.io/tls",
+                    "data": {
+                        "tls.crt": `${encodedCert}`,
+                        "tls.key": `${encodedKey}`
+                    }
+                };
+
+                console.log("*** SECRET: " + secret);
+
+                const resp = k8sClient.api.v1.namespaces(process.env.KUBE_NAMESPACE).secrets.post({body: secret});
+
+                ingress.spec.tls = [
+                    {
+                        "hosts": [
+                            `${ingressDomain}`
+                        ],
+                        "secretName": `${secretName}`
+                    }
+                ];
+            });
         }
+
         // If an old ingress already exists, delete it first (to ensure port updates are reflected)
         // Then create the ingress resource for the application
         const resp = await k8sClient.apis.extensions.v1beta1.namespaces(KUBE_NAMESPACE).ingresses.get({ qs: { labelSelector: "projectID=" + projectID } });
@@ -556,7 +561,7 @@ export async function exposeOverIngress(projectID: string, isHTTPS: boolean, app
             const ingressName = resp.body.items[0].metadata.name;
             await k8sClient.apis.extensions.v1beta1.namespaces(KUBE_NAMESPACE).ingresses(ingressName).delete();
         }
-        await k8sClient.apis.extensions.v1beta1.namespaces(KUBE_NAMESPACE).ingresses.post({body: ingress});
+        k8sClient.apis.extensions.v1beta1.namespaces(KUBE_NAMESPACE).ingresses.post({body: ingress});
     } catch (err) {
         logger.logProjectError("Unable to deploy ingress for project", projectID);
         throw err;
