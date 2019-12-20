@@ -539,19 +539,24 @@ export async function exposeOverIngress(projectID: string, isHTTPS: boolean, app
                     }
                 };
 
-                console.log("*** SECRET: " + secret);
-
-                const resp = k8sClient.api.v1.namespaces(process.env.KUBE_NAMESPACE).secrets.post({body: secret});
-
-                ingress.spec.tls = [
-                    {
-                        "hosts": [
-                            `${ingressDomain}`
-                        ],
-                        "secretName": `${secretName}`
-                    }
-                ];
+                try {
+                    k8sClient.api.v1.namespaces(process.env.KUBE_NAMESPACE).secrets.post({body: secret});
+                } catch (err) {
+                    logger.logProjectError("Unable to deploy ingress TLS secret for project", projectID);
+                    throw err;
+                }
             });
+
+            ingress.spec.tls = [
+                {
+                    "hosts": [
+                        `${ingressDomain}`
+                    ],
+                    "secretName": `${secretName}`
+                }
+            ];
+
+            console.log("*** INGRESS: " + ingress);
         }
 
         // If an old ingress already exists, delete it first (to ensure port updates are reflected)
