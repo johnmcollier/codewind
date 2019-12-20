@@ -566,7 +566,7 @@ export async function exposeOverIngress(projectID: string, isHTTPS: boolean, app
             const ingressName = resp.body.items[0].metadata.name;
             await k8sClient.apis.extensions.v1beta1.namespaces(KUBE_NAMESPACE).ingresses(ingressName).delete();
         }
-        k8sClient.apis.extensions.v1beta1.namespaces(KUBE_NAMESPACE).ingresses.post({body: ingress});
+        await k8sClient.apis.extensions.v1beta1.namespaces(KUBE_NAMESPACE).ingresses.post({body: ingress});
     } catch (err) {
         logger.logProjectError("Unable to deploy ingress for project", projectID);
         throw err;
